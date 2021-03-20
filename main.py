@@ -26,9 +26,8 @@ def setupDriver(hless=False):
         hless (bool, optional): Should the browser run headless. Defaults to False.
 
     Returns:
-        splinterDriver: A splinter browser driver.
+        WebDriver: A splinter browser driver.
     """
-    log
     browserOptions = wd.ChromeOptions()
     browserOptions.add_argument("--lang=en-GB")
     browserOptions.add_experimental_option(
@@ -42,7 +41,43 @@ def setupDriver(hless=False):
     return Sbrowser("chrome", options=browserOptions)
 
 
+def findCookieNotice(browser):
+    """A function that searched for a GDPR/Cookie consent notice.
+
+    Args:
+        browser ([type]): [description]
+    """
+    # Todo stuff here with browser.
+
+
+@log.catch  # Lets be sure to catch all exceptions!
+def startCrawl(url, browser):
+    """Starts the crawler at url, with driver browser.
+
+    Args:
+        url ([type]): The url to start the crawl at.
+        browser ([type]): the WebDriver browser to use.
+    """
+    log.info("Setting up crawler for {}...", url)
+    # Clean the browser from previous run
+    log.debug("Cleaning cookies before run.")
+    browser.driver.delete_all_cookies()
+    # Navigate to the page.
+    browser.visit(url)
+    time.sleep(2)  # A sleep is needed for selenium to finish load.
+    # Save down the cookies.
+    allCookies = browser.cookies.all()
+    # Take a screenshot.
+    # Save down dict
+    # Find cookie notice.
+    findCookieNotice(browser)
+
+
 if __name__ == "__main__":
+    # Setup logging and a basic browser driver.
     setupLogging()
-    browser = setupDriver(True)
-    time.sleep(10)
+    browser = setupDriver(False)
+    # Fetch the urls to be crawled.
+    urls = ["https://yahoo.com", "https://svt.se"]
+    for url in urls:
+        startCrawl(url, browser)
