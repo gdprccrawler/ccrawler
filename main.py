@@ -10,12 +10,14 @@ from loguru import logger as log
 from selenium import webdriver as wd
 from splinter import Browser as Sbrowser
 
+mainPath = os.path.abspath(os.getcwd())
+
 
 def genRunId(url):
     """Takes in url, and turns it into a run ID for usage in the program."""
-    url = url.replace("https://", "").replace("http://", "").split(".")[0]
+    url = url.replace("https://", "").replace("http://", "").replace(".", "-")
     id = "".join(
-        random.choice(string.ascii_uppercase + string.digits) for _ in range(6)
+        random.choice(string.ascii_uppercase + string.digits) for _ in range(4)
     )
     return url + "-" + id
 
@@ -60,34 +62,14 @@ def setupDriver(hless=False):
     return Sbrowser("chrome", options=browserOptions)
 
 
-def openDropdowns(browser):
+def openDropdowns(b):
     """A function to open all dropdowns on a page, used before taking screenshot.
 
     Args:
-        browser (WebDriver): The webdriver browser to use.
+        b (WebDriver): The webdriver browser to use.
     """
     # Use js to open all dropdowns
-    browser.execute_script(
-        "document.querySelectorAll('.chevron').forEach(e => e.click())"
-    )
-
-
-def findByButtonString(browser, text):  # Return first element found
-    foundElements = browser.find_by_xpath(
-        f"//button[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'),'{text}')]"
-    )
-    if foundElements:
-        return foundElements.first
-    else:
-        return None
-
-
-def findByInputString(browser, text):  # Return first element found
-    foundElements = browser.find_by_xpath(f"//input[contains(@value,'{text}')]")
-    if foundElements:
-        return foundElements.first
-    else:
-        return None
+    b.execute_script("document.querySelectorAll('.chevron').forEach(e => e.click())")
 
 
 def checkCookieIframe(browser):  # Function to check if there is a iframe
@@ -96,122 +78,230 @@ def checkCookieIframe(browser):  # Function to check if there is a iframe
             "//*[contains(@title, 'onsent')]"
         )  # onsent used for C/consent.
         if foundIframes:
-            log.debug("Jumping into a found iframe...")
             browser.driver.switch_to.frame(foundIframes.first["id"])
+            return True
     except:
-        log.debug("Could not find an iframe.")
+        return False
 
 
-def findApproveButton(browser):
-    """Function that tries to find approve button on current page.
-
-    Args:
-        browser ([type]): The browser driver.
-
-    Returns:
-        [type]: Element found, else none.
-    """
-    log.debug("Looking for approve button.")
-    strings = ["pprove", "ccept", "gree", "lose", "odkänner", "örstår", "äng"]
-    for s in strings:
-        # Look for buttons with that string.
-        acceptButton = findByButtonString(browser, s)
-        if acceptButton is None:  # Only check for input if no button is found.
-            acceptButton = findByInputString(browser, s)
-        if acceptButton:
-            log.debug("Found an approve button on string {}, returning element.", s)
-            return acceptButton
-    log.debug("Did not find an approve button on page.")
-    return None
+def screenshotElement(elem, dst):  # Function to screenshot current element to path
+    try:
+        if not os.path.exists(os.path.dirname(dst)):  # Make path if not exists
+            os.makedirs(os.path.dirname(dst))
+        tmpImg = elem.screenshot(dst)  # Take a screenshot
+        os.rename(tmpImg, dst)  # Move to correct filename.
+        log.debug("Took screenshot of element!")
+        return dst
+    except:
+        e = sys.exc_info()[0]
+        log.error("Could not screenshot element, error: {}", e)
 
 
-def findPreferenceButton(browser):
-    """Function that tries to find settings button on current page.
+def screenshotPage(b, dst):  # Function to screenshot current page to path
+    try:
+        if not os.path.exists(os.path.dirname(dst)):  # Make path if not exists
+            os.makedirs(os.path.dirname(dst))
+        tmpImg = b.screenshot(dst, full=True)  # Take a screenshot
+        os.rename(tmpImg, dst)  # Move to correct filename.
+        log.debug("Took screenshot of page!")
+        return dst
+    except:
+        e = sys.exc_info()[0]
+        log.error("Could not screenshot page, error: {}", e)
 
-    Args:
-        browser ([type]): The browser driver.
 
-    Returns:
-        [type]: Element found, else none.
-    """
-    log.debug("Looking for settings button.")
-    strings = ["configure", "settings", "manage", "inställningar"]
-    for s in strings:
-        linksToManage = findByButtonString(browser, s)  # Look by button name.
-        if linksToManage is None:
-            linksToManage = browser.links.find_by_partial_text(s)  # Look by hefs.
-        if linksToManage:
-            log.debug("Found an settings button on string {}, returing element", s)
-            return linksToManage
-    # Check one last time for links containing string cookie.
-    lastCheck = browser.find_by_xpath("//a[contains(@href,'cookie')]")
+def findAppr(b):  # Return first element found
+    m = [
+        "iagree",
+        "agree",
+        "accept",
+        "iaccept",
+        "acceptcookies",
+        "allow",
+        "acceptall",
+        "jagförstår",
+        "ok,stäng",
+        "stäng",
+    ]
+    # First check for buttons with any matchin text string.
+    log.debug("Looking for buttons...")
+    items = b.find_by_tag("button")
+    for item in items:
+        text = item.value or item.text
+        if not text:  # If we have no text, why keep checking this one?
+            continue
+        # Make lowercase, remove all types of spaces, tabs, newlines...
+        text = "".join(text.lower().replace("+", "").split())
+        if text in m:
+            log.debug("Found match on {}!", text)
+            return item
+    # Secondly check for inputs with any matching text string.
+    log.debug("Lookings for inputs...")
+    items = b.find_by_tag("input")
+    for item in items:
+        text = item.value or item.text
+        if not text:  # If we have no text, why keep checking this one?
+            continue
+        # Make lowercase, remove all types of spaces, tabs, newlines...
+        text = "".join(text.lower().split())
+        if text in m:
+            log.debug("Found match on {}!", text)
+            return item
+        # Well then, we can also check for a hrefs...
+    log.debug("Lookings for a´s...")
+    items = b.find_by_tag("a")
+    for item in items:
+        text = item.value or item.text
+        if not text:  # If we have no text, why keep checking this one?
+            continue
+        # Make lowercase, remove all types of spaces, tabs, newlines...
+        text = "".join(text.lower().split())
+        if text in m:
+            log.debug("Found match on {}!", text)
+            return item
+    return None  # None found
+
+
+def findMore(b):  # Return first element found
+    m = [
+        "configure",
+        "manage",
+        "managecookies",
+        "configurepreferences",
+        "managetrackers",
+        "managesettings",
+        "settings",
+        "läsmer",
+        "inställningar",
+        "hanterainställningar",
+    ]
+    # First check for buttons with any matchin text string.
+    log.debug("Looking for buttons...")
+    items = b.find_by_tag("button")
+    for item in items:
+        text = item.value or item.text
+        if not text:  # If we have no text, why keep checking this one?
+            continue
+        # Make lowercase, remove all types of spaces, tabs, newlines...
+        text = "".join(text.lower().replace("+", "").split())
+        if text in m:
+            log.debug("Found match on {}!", text)
+            return item
+    # Secondly check for inputs with any matching text string.
+    log.debug("Lookings for inputs...")
+    items = b.find_by_tag("input")
+    for item in items:
+        text = item.value or item.text
+        if not text:  # If we have no text, why keep checking this one?
+            continue
+        # Make lowercase, remove all types of spaces, tabs, newlines...
+        text = "".join(text.lower().split())
+        if text in m:
+            log.debug("Found match on {}!", text)
+            return item
+    # Well then, we can also check for a hrefs...
+    log.debug("Lookings for a´s...")
+    items = b.find_by_tag("a")
+    for item in items:
+        text = item.value or item.text
+        if not text:  # If we have no text, why keep checking this one?
+            continue
+        # Make lowercase, remove all types of spaces, tabs, newlines...
+        text = "".join(text.lower().split())
+        if text in m:
+            log.debug("Found match on {}!", text)
+            return item
+    # Last way, not the best, but can find some links to cookie policys.
+    lastCheck = b.find_by_xpath("//a[contains(@href,'cookie')]")
     if lastCheck:
         log.debug(
-            "Found an settings link by checking for links containing string cookie"
+            "Found an settings link by checking for links containing string cookie."
         )
         return lastCheck.first
-    log.debug("Did not find an settings button on page.")
-    return None
+    lastCheck = b.find_by_xpath("//a[contains(@href,'policy')]")
+    if lastCheck:
+        log.debug(
+            "Found an settings link by checking for links containing string policy."
+        )
+        return lastCheck.first
+    return None  # None found
 
 
-def findCookieNotice(browser):
-    """A function that searched for a GDPR/Cookie consent notice.
-
-    Args:
-        browser ([type]): [description]
-    """
-    path = os.path.abspath(os.getcwd())
-    gid = genRunId(browser.url)
-    checkCookieIframe(browser)
-    apprBtn = findApproveButton(browser)
-    prefsBtn = findPreferenceButton(browser)
-    screenshot64 = browser.driver.get_screenshot_as_base64()
-    cookies = browser.cookies.all()
-    # Look for accept all button.
-    # Make nicer looking finder.
-    obj = {
-        "url": browser.url,  # The current url
-        "cookies": cookies,  # The cookies before any clicking on page.
-        "apprBtn": apprBtn,  # The approve button, if any.
-        "prefsBtn": prefsBtn,  # The prefs button, if any.
-        "prefsNewPage": prefsBtn["href"]
-        is not None,  # If the prefs are located on new page.
-        # "screenshot64": screenshot64,
-    }
-    pprint.pprint(obj)
-    return obj
+def cookieShot(b):  # Function that takes a "shot" of all cookies.
+    return browser.cookies.all()
 
 
 @log.catch  # Lets be sure to catch all exceptions!
-def startCrawl(url, browser):
-    """Starts the crawler at url, with driver browser.
-
-    Args:
-        url ([type]): The url to start the crawl at.
-        browser ([type]): the WebDriver browser to use.
-    """
-    log.info("Setting up crawler for {}...", url)
-    # Clean the browser from previous run
-    log.debug("Cleaning cookies before run.")
-    browser.driver.delete_all_cookies()
-    # Navigate to the page.
+def startCrawl(url, b):
+    # Here we should
+    # create id variable.
+    runId = genRunId(url)
+    # 1. visit the url.
+    log.info("Starting crawl id '{}'.", runId)
     browser.visit(url)
-    time.sleep(2)  # A sleep is needed for selenium to finish load.
-    # Take a screenshot.
-    # Save down dict
-    # Find cookie notice.
-    info = findCookieNotice(browser)
-    pprint.pprint(info)
-    log.info("Url to cookie settings is:{}", info["prefsBtn"].click())
-    time.sleep(10)
+    # 1.1 Save down cookies.
+    cookiesPre = b.cookies.all()
+    # 1.2 Look for Iframes and jump in if found.
+    iframeW = checkCookieIframe(b)
+    if iframeW:
+        log.info("Cookie consent seems to be an iframe, jumped in.")
+    # 2. Check for approve and more settings buttons.
+    log.info("Trying to find buttons, please wait.")
+    apprBtn = findAppr(b)
+    moreBtn = findMore(b)
+    if apprBtn:
+        log.info("Found a approve button/link.")
+    else:
+        log.info("Warning, could not find approve button/link.")
+    if moreBtn:
+        log.info("Found a settings button/link.")
+    else:
+        log.info("Warning, could not find settings button/link.")
+    # 3. Screenshot Whole page, each button by themselves.
+    log.info("Taking screenshot of page, and buttons.")
+    screenshotPage(b, f"{mainPath}/screens/{runId}/mainPage.png")
+    screenshotElement(apprBtn, f"{mainPath}/screens/{runId}/approve.png")
+    screenshotElement(moreBtn, f"{mainPath}/screens/{runId}/more.png")
+    log.info("Done with screenshots.")
+    # 4. Save down the colors of buttons:
+    log.info(
+        "BG color of apprBtn is {} with the text color {}.",
+        apprBtn._element.value_of_css_property("background-color"),
+        apprBtn._element.value_of_css_property("color"),
+    )
+    log.info(
+        "BG color of moreBtn is {} with the text color {}.",
+        moreBtn._element.value_of_css_property("background-color"),
+        moreBtn._element.value_of_css_property("color"),
+    )
+    # 5. Navigate to the next page i.e settings page, open dropdowns, take screenshot
+    # Decide what type of button/link moreBtn is, is it a redirect or a JS function/button??
+    if moreBtn._element.get_attribute("href"):
+        # The settings are on a different page, visit the page.
+        log.info("More button seems to be a link, clicking.")
+        b.visit(moreBtn._element.get_attribute("href"))
+    else:
+        # Click on the button, simulating user.
+        log.info("More button is JS/same-page, clicking.")
+        moreBtn.click()
+    log.info("On new page, sleeping 3 seconds for load.")
+    time.sleep(3)
+    # Open all dropdowns on page.
+    log.info("Opening dropdowns, if any.")
+    openDropdowns(b)
+    # Take screenshot of page.
+    log.info("Taking screenshot of more page.")
+    screenshotPage(b, f"{mainPath}/screens/{runId}/morePage.png")
+    # 6. More stuff i guess....
+    return None
 
 
 if __name__ == "__main__":
     # Setup logging and a basic browser driver.
     setupLogging()
-    browser = setupDriver(False)
+    browser = setupDriver(True)
     # Fetch the urls to be crawled.
-    urls = ["https://cnn.com"]
+    urls = ["https://svt.se"]
     for url in urls:
         with log.contextualize(url=url):
             startCrawl(url, browser)
