@@ -1,308 +1,319 @@
-# Main file for CCrawler
 import json
-import sys
 import time
-import os
-import string
-import random
+import pendulum
 import pprint
+import sys
+import os
+from langdetect import detect
 from loguru import logger as log
-from selenium import webdriver as wd
 from splinter import Browser as Sbrowser
+from selenium.webdriver.support.color import Color
 
 mainPath = os.path.abspath(os.getcwd())
 
 
-def genRunId(url):
-    """Takes in url, and turns it into a run ID for usage in the program."""
-    url = url.replace("https://", "").replace("http://", "").replace(".", "-")
-    id = "".join(
-        random.choice(string.ascii_uppercase + string.digits) for _ in range(4)
-    )
-    return url + "-" + id
+class Button:
+    """A class for buttons."""
+
+    def __init__(self):
+        self.text = None
+        self.color = None
+        self.textColor = None
+        self.type = None
+        self.redirect = None
+        self.html = None
+
+    @log.catch
+    def importBtn(self, btnElem=None):
+        """Function that converts WebDriverElement "button" into class Button.
+
+        Args:
+            btnElem (WebDriverElement): The "button" element.
+        """
+        # If no button, return.
+        if not btnElem:
+            return
+        # Lets not forget the element.
+        self.elem = btnElem
+        # Now lets fill out the apprBtn extras from button.
+        if self.elem:
+            self.text = self.elem.text or self.elem.value
+            self.type = self.elem.tag_name
+            self.html = self.elem._element.get_attribute("outerHTML")
+        if self.elem._element.get_attribute("href"):
+            self.redirect = self.elem._element.get_attribute("href")
+        if self.elem._element.value_of_css_property("background-color"):
+            self.color = Color.from_string(
+                self.elem._element.value_of_css_property("background-color")
+            ).hex
+        if self.elem._element.value_of_css_property("color"):
+            self.textColor = Color.from_string(
+                self.elem._element.value_of_css_property("color")
+            ).hex
+        self.elem = None
 
 
-def setupLogging():
-    """This function sets up a default logger for the crawler."""
-    log.remove()
-    extra = {"url": "NURL"}
-    log.configure(extra=extra)
-    log.add(
-        sys.stdout,
-        colorize=True,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level}</level> | {extra[url]} |<cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
-    )
-    log.add(
-        "logs/logs.log",
-        format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level}</level> | {extra[url]} |<cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
-        rotation="1 day",
-    )
-    log.info("Starting log...")
+class PageResult:
+    """This class/object contains the result of a page scan."""
+
+    def __init__(self, url):
+        # Setup basic vars.
+        self.url = url
+        self.failed = False
+        self.failedMsg = None
+        self.failedExp = None
+        # Cookies and HTML of page.
+        self.cookies = {}  # dict of all cookies.
+        self.rawHtml = None
+        # More information
+        self.lang = None
+        self.iframe = None  # TODO:Add
+        # Found buttons
+        self.apprBtn = None
+        self.moreBtn = None
+        # List of all screenshot paths.
+        self.screens = []
+
+    def setApprBtn(self, btn):
+        """Sets the pages approve button.
+
+        Args:
+            btn (Button): A button object.
+        """
+        self.apprBtn = btn
+
+    def setMoreBtn(self, btn):
+        """Sets the pages more button.
+
+        Args:
+            btn (Button): A button object.
+        """
+        self.moreBtn = btn
+
+    def setHtml(self, html):
+        """Sets the raw html of page
+
+        Args:
+            html (str): The raw, unparsed html of page.
+        """
+        self.rawHtml = html
+
+    def setLang(self, lang):
+        """Sets the language of the page.
+
+        Args:
+            lang (str): Language tag.
+        """
+        self.lang = lang
+
+    def setCookies(self, cookies):
+        self.cookies = cookies
+
+    def addScreen(self, screen):
+        """Adds a screenshot to this pages list of screens.
+
+        Args:
+            screen (str): The path to the screenshot.
+        """
+        self.screens.append(screen)
+
+    def toJson(self):
+        """Function to return this object as a json object.
+
+        Returns:
+            str: A json representation of this object.
+        """
+        res = {
+            key: value for key, value in self.__dict__.items() if key not in ["browser"]
+        }
+        return json.dumps(
+            res, indent=2, default=lambda x: x.__dict__, ensure_ascii=False
+        )
 
 
-def setupDriver(hless=False):
-    """Returns a setup browser from splinter, ready for scaping.
-
-    Args:
-        hless (bool, optional): Should the browser run headless. Defaults to False.
-
-    Returns:
-        WebDriver: A splinter browser driver.
+@log.catch
+class PageScanner:
+    """This class setups a page scanner, which can crawl a page for
+    cookie consent notices.
     """
-    browserOptions = wd.ChromeOptions()
-    browserOptions.add_argument("--lang=en-GB")
-    browserOptions.add_experimental_option(
-        "prefs", {"intl.accept_languages": "en,en_GB"}
-    )
-    browserOptions.headless = hless
-    if hless:
-        log.info("Starting a headless chrome drier...")
-    else:
-        log.info("Starting a visible chrome driver...")
-    return Sbrowser("chrome", options=browserOptions)
 
+    def __init__(self, browser, url):
+        self.startedAt = None
+        self.endedAt = None
+        self.browser = browser
+        self.url = url
+        self.res = PageResult(self.url)
 
-def openDropdowns(b):
-    """A function to open all dropdowns on a page, used before taking screenshot.
+    @log.catch
+    def doScan(self, followLinks=True, screenshot=True):
+        """Do a scan of the current url we are at.
 
-    Args:
-        b (WebDriver): The webdriver browser to use.
-    """
-    # Use js to open all dropdowns
-    b.execute_script("document.querySelectorAll('.chevron').forEach(e => e.click())")
+        Args:
+            followLinks (bool, optional): If we should follow links/hrefs to settings. Defaults to True.
+            screenshot (bool, optional): If we should screenshot all found elements. Defaults to True.
+        """
+        try:
+            self.startedAt = pendulum.now().to_iso8601_string()
+            # self.browser.visit(self.url)
+            # Clear cookies and local storage before run.
+            log.debug("Clearing cookies, preparing for run.")
+            self.browser.cookies.delete()
+            # Navigate to page.
+            self.browser.visit(self.url)
+            log.debug("Navigated to url.")
+            # Lets figure out the language
+            self._resolveLang()
+            # Lets grab the cookies, mmm.
+            cookies = self.browser.cookies.all(True)
+            pprint.pprint(cookies)
+            self.res.setCookies(cookies)
+            # Lets find our approve and more button.
+            trigs = [
+                "iagree",
+                "agree",
+                "accept",
+                "iaccept",
+                "acceptcookies",
+                "allow",
+                "acceptall",
+                "jagförstår",
+                "ok,stäng",
+                "stäng",
+                "tilladalle",
+            ]
+            aBtn = self._findBtnElem(trigs)
+            if aBtn:
+                apprBtn = Button()
+                apprBtn.importBtn(aBtn)
+                self.res.setApprBtn(apprBtn)
+            trigs = [
+                "configure",
+                "manage",
+                "managecookies",
+                "configurepreferences",
+                "managetrackers",
+                "managesettings",
+                "settings",
+                "läsmer",
+                "inställningar",
+                "hanterainställningar",
+                "tilladvalge",
+            ]
+            mBtn = self._findBtnElem(trigs)
+            if not mBtn:
+                mBtn = self._findMoreLink()
+            if mBtn:
+                moreBtn = Button()
+                moreBtn.importBtn(mBtn)
+                self.res.setMoreBtn(moreBtn)
+            # Lets screenshot our elements
+            aBtnS = aBtn.screenshot(f"{mainPath}/screens/screen.png")
+            mBtnS = mBtn.screenshot(f"{mainPath}/screens/screen.png")
+            self.res.addScreen(aBtnS)
+            self.res.addScreen(mBtnS)
+            self.endedAt = pendulum.now().to_iso8601_string()
+        except:
+            # Log stuff here.
+            log.error("WOOPS, SOMETHING WENT WRONG...")
 
+    @log.catch
+    def _findBtnElem(self, triggers):
+        """Tries to find a button on page containg any string in input list.
 
-def checkCookieIframe(browser):  # Function to check if there is a iframe
-    try:
-        foundIframes = browser.find_by_tag("iframe").find_by_xpath(
-            "//*[contains(@title, 'onsent')]"
-        )  # onsent used for C/consent.
-        if foundIframes:
-            browser.driver.switch_to.frame(foundIframes.first["id"])
-            return True
-    except:
+        Args:
+            triggers (list): A list of strings to look for.
+
+        Returns:
+            WebDriverElement: The found element, if any.
+        """
+        elemTypes = ["button", "input", "a"]
+        for t in elemTypes:
+            log.debug("Looking for element by type {}.", t)
+            elems = self.browser.find_by_tag(t)
+            for elem in elems:
+                elemText = elem.value or elem.text
+                if not elemText:
+                    continue
+                # Make lowercase, remove spaces,tabs,newlines,non alphab chars.
+                elemText = "".join(char for char in elemText if char.isalpha())
+                elemText = "".join(elemText.lower().split())
+                # Compare against list
+                if elemText in triggers:
+                    log.debug("Found element, on match {}.", elemText)
+                    return elem
+        # Did not find any element.
+        log.debug("Did not find any element.")
+        return None
+
+    @log.catch
+    def _findMoreLink(self):
+        """A last way to find link to more settings page/info.
+        uses xpath to look for links containg cookie or policy.
+        """
+        xpaths = ["//a[contains(@href,'cookie')]", "//a[contains(@href,'policy')]"]
+        for xpath in xpaths:
+            elems = self.browser.find_by_xpath(xpath)
+            if elems:
+                log.debug("Found cookie/policy link element.")
+                return elems.first
+        log.debug("Did not find any cookie/policy link.")
+        return None  # None found
+
+    @log.catch
+    def _iframeHandler(self):
+        """This function handles if there is a popup iframe of a consent,
+        as some pages uses CMSes that are loded via iframe. If iframe is found,
+        we just jump in.
+
+        Returns:
+            boolean: If we jumped in a frame or not.
+        """
+        try:
+            frames = self.browser.find_by_tag("iframe").find_by_xpath(
+                "//*[contains(@title, 'onsent')]"
+            )
+            if frames:
+                log.debug("Found an iframe, jumping in.")
+                self.browser.driver.switch_to.frame(frames.first["id"])
+                return True
+        except:
+            log.debug("Didnt find iframe.")
         return False
 
+    @log.catch
+    def _resolveLang(self):
+        """Tries to resolve language of current page."""
+        try:
+            log.debug("Determining language.")
+            textBody = self.browser.evaluate_script(
+                "window.document.body.innerText.valueOf();"
+            )
+            lang = detect(textBody)
+            self.res.setLang(lang)
+        except:
+            log.debug("Could not determine language.")
 
-def screenshotElement(elem, dst):  # Function to screenshot current element to path
-    try:
-        if not os.path.exists(os.path.dirname(dst)):  # Make path if not exists
-            os.makedirs(os.path.dirname(dst))
-        tmpImg = elem.screenshot(dst)  # Take a screenshot
-        os.rename(tmpImg, dst)  # Move to correct filename.
-        log.debug("Took screenshot of element!")
-        return dst
-    except:
-        e = sys.exc_info()[0]
-        log.error("Could not screenshot element, error: {}", e)
+    @log.catch
+    def toJson(self):
+        """Function to return this object as a json object.
 
-
-def screenshotPage(b, dst):  # Function to screenshot current page to path
-    try:
-        if not os.path.exists(os.path.dirname(dst)):  # Make path if not exists
-            os.makedirs(os.path.dirname(dst))
-        tmpImg = b.screenshot(dst, full=True)  # Take a screenshot
-        os.rename(tmpImg, dst)  # Move to correct filename.
-        log.debug("Took screenshot of page!")
-        return dst
-    except:
-        e = sys.exc_info()[0]
-        log.error("Could not screenshot page, error: {}", e)
-
-
-def findAppr(b):  # Return first element found
-    m = [
-        "iagree",
-        "agree",
-        "accept",
-        "iaccept",
-        "acceptcookies",
-        "allow",
-        "acceptall",
-        "jagförstår",
-        "ok,stäng",
-        "stäng",
-    ]
-    # First check for buttons with any matchin text string.
-    log.debug("Looking for buttons...")
-    items = b.find_by_tag("button")
-    for item in items:
-        text = item.value or item.text
-        if not text:  # If we have no text, why keep checking this one?
-            continue
-        # Make lowercase, remove all types of spaces, tabs, newlines...
-        text = "".join(text.lower().replace("+", "").split())
-        if text in m:
-            log.debug("Found match on {}!", text)
-            return item
-    # Secondly check for inputs with any matching text string.
-    log.debug("Lookings for inputs...")
-    items = b.find_by_tag("input")
-    for item in items:
-        text = item.value or item.text
-        if not text:  # If we have no text, why keep checking this one?
-            continue
-        # Make lowercase, remove all types of spaces, tabs, newlines...
-        text = "".join(text.lower().split())
-        if text in m:
-            log.debug("Found match on {}!", text)
-            return item
-        # Well then, we can also check for a hrefs...
-    log.debug("Lookings for a´s...")
-    items = b.find_by_tag("a")
-    for item in items:
-        text = item.value or item.text
-        if not text:  # If we have no text, why keep checking this one?
-            continue
-        # Make lowercase, remove all types of spaces, tabs, newlines...
-        text = "".join(text.lower().split())
-        if text in m:
-            log.debug("Found match on {}!", text)
-            return item
-    return None  # None found
-
-
-def findMore(b):  # Return first element found
-    m = [
-        "configure",
-        "manage",
-        "managecookies",
-        "configurepreferences",
-        "managetrackers",
-        "managesettings",
-        "settings",
-        "läsmer",
-        "inställningar",
-        "hanterainställningar",
-    ]
-    # First check for buttons with any matchin text string.
-    log.debug("Looking for buttons...")
-    items = b.find_by_tag("button")
-    for item in items:
-        text = item.value or item.text
-        if not text:  # If we have no text, why keep checking this one?
-            continue
-        # Make lowercase, remove all types of spaces, tabs, newlines...
-        text = "".join(text.lower().replace("+", "").split())
-        if text in m:
-            log.debug("Found match on {}!", text)
-            return item
-    # Secondly check for inputs with any matching text string.
-    log.debug("Lookings for inputs...")
-    items = b.find_by_tag("input")
-    for item in items:
-        text = item.value or item.text
-        if not text:  # If we have no text, why keep checking this one?
-            continue
-        # Make lowercase, remove all types of spaces, tabs, newlines...
-        text = "".join(text.lower().split())
-        if text in m:
-            log.debug("Found match on {}!", text)
-            return item
-    # Well then, we can also check for a hrefs...
-    log.debug("Lookings for a´s...")
-    items = b.find_by_tag("a")
-    for item in items:
-        text = item.value or item.text
-        if not text:  # If we have no text, why keep checking this one?
-            continue
-        # Make lowercase, remove all types of spaces, tabs, newlines...
-        text = "".join(text.lower().split())
-        if text in m:
-            log.debug("Found match on {}!", text)
-            return item
-    # Last way, not the best, but can find some links to cookie policys.
-    lastCheck = b.find_by_xpath("//a[contains(@href,'cookie')]")
-    if lastCheck:
-        log.debug(
-            "Found an settings link by checking for links containing string cookie."
+        Returns:
+            str: A json representation of this object.
+        """
+        res = {
+            key: value
+            for key, value in self.__dict__.items()
+            if key not in ["browser", "elem"]
+        }
+        return json.dumps(
+            res, indent=2, default=lambda x: x.__dict__, ensure_ascii=False
         )
-        return lastCheck.first
-    lastCheck = b.find_by_xpath("//a[contains(@href,'policy')]")
-    if lastCheck:
-        log.debug(
-            "Found an settings link by checking for links containing string policy."
-        )
-        return lastCheck.first
-    return None  # None found
-
-
-def cookieShot(b):  # Function that takes a "shot" of all cookies.
-    return browser.cookies.all()
-
-
-@log.catch  # Lets be sure to catch all exceptions!
-def startCrawl(url, b):
-    # Here we should
-    # create id variable.
-    runId = genRunId(url)
-    # 1. visit the url.
-    log.info("Starting crawl id '{}'.", runId)
-    browser.visit(url)
-    # 1.1 Save down cookies.
-    cookiesPre = b.cookies.all()
-    # 1.2 Look for Iframes and jump in if found.
-    iframeW = checkCookieIframe(b)
-    if iframeW:
-        log.info("Cookie consent seems to be an iframe, jumped in.")
-    # 2. Check for approve and more settings buttons.
-    log.info("Trying to find buttons, please wait.")
-    apprBtn = findAppr(b)
-    moreBtn = findMore(b)
-    if apprBtn:
-        log.info("Found a approve button/link.")
-    else:
-        log.info("Warning, could not find approve button/link.")
-    if moreBtn:
-        log.info("Found a settings button/link.")
-    else:
-        log.info("Warning, could not find settings button/link.")
-    # 3. Screenshot Whole page, each button by themselves.
-    log.info("Taking screenshot of page, and buttons.")
-    screenshotPage(b, f"{mainPath}/screens/{runId}/mainPage.png")
-    screenshotElement(apprBtn, f"{mainPath}/screens/{runId}/approve.png")
-    screenshotElement(moreBtn, f"{mainPath}/screens/{runId}/more.png")
-    log.info("Done with screenshots.")
-    # 4. Save down the colors of buttons:
-    log.info(
-        "BG color of apprBtn is {} with the text color {}.",
-        apprBtn._element.value_of_css_property("background-color"),
-        apprBtn._element.value_of_css_property("color"),
-    )
-    log.info(
-        "BG color of moreBtn is {} with the text color {}.",
-        moreBtn._element.value_of_css_property("background-color"),
-        moreBtn._element.value_of_css_property("color"),
-    )
-    # 5. Navigate to the next page i.e settings page, open dropdowns, take screenshot
-    # Decide what type of button/link moreBtn is, is it a redirect or a JS function/button??
-    if moreBtn._element.get_attribute("href"):
-        # The settings are on a different page, visit the page.
-        log.info("More button seems to be a link, clicking.")
-        b.visit(moreBtn._element.get_attribute("href"))
-    else:
-        # Click on the button, simulating user.
-        log.info("More button is JS/same-page, clicking.")
-        moreBtn.click()
-    log.info("On new page, sleeping 3 seconds for load.")
-    time.sleep(3)
-    # Open all dropdowns on page.
-    log.info("Opening dropdowns, if any.")
-    openDropdowns(b)
-    # Take screenshot of page.
-    log.info("Taking screenshot of more page.")
-    screenshotPage(b, f"{mainPath}/screens/{runId}/morePage.png")
-    # 6. More stuff i guess....
-    return None
 
 
 if __name__ == "__main__":
-    # Setup logging and a basic browser driver.
-    setupLogging()
-    browser = setupDriver(True)
-    # Fetch the urls to be crawled.
-    urls = ["https://svt.se"]
-    for url in urls:
-        with log.contextualize(url=url):
-            startCrawl(url, browser)
+    print("Creating test obj..")
+    browser = Sbrowser("chrome", headless=True)
+    res = PageScanner(browser, "https://cnn.com")
+    res.doScan()
+    print(res.toJson())
     browser.quit()
