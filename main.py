@@ -88,7 +88,7 @@ class PageResult:
         self.rawHtml = None
         # More information
         self.lang = None
-        self.iframe = None  # TODO:Add
+        self.iframe = None
         # Found buttons
         self.apprBtn = None
         self.moreBtn = None
