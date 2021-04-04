@@ -12,6 +12,27 @@ from selenium.webdriver.support.color import Color
 mainPath = os.path.abspath(os.getcwd())
 
 
+class Logger:
+    """A class for buttons."""
+
+    def __init__(self, log):
+        # This function sets up a default logger for the crawler.
+        log.remove()
+        extra = {"url": "NURL"}
+        log.configure(extra=extra)
+        log.add(
+            sys.stdout,
+            colorize=True,
+            format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level}</level> | {extra[url]} |<cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
+        )
+        log.add(
+            "logs/logs.log",
+            format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level}</level> | {extra[url]} |<cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
+            rotation="1 day",
+        )
+        log.info("Starting log...")
+
+
 class Button:
     """A class for buttons."""
 
@@ -311,6 +332,7 @@ class PageScanner:
 
 
 if __name__ == "__main__":
+    Logger(log)
     print("Creating test obj..")
     browser = Sbrowser("chrome", headless=True)
     res = PageScanner(browser, "https://cnn.com")
