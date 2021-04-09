@@ -4,16 +4,19 @@ import pendulum
 import pprint
 import sys
 import os
+import splinter
 from langdetect import detect
 from loguru import logger as log
 from splinter import Browser as Sbrowser
+from selenium import webdriver as wd
 from selenium.webdriver.support.color import Color
 
 mainPath = os.path.abspath(os.getcwd())
+runId = None
 
 
 class Logger:
-    """A class for buttons."""
+    """A class for logging."""
 
     def __init__(self, log):
         # This function sets up a default logger for the crawler.
@@ -36,42 +39,64 @@ class Logger:
 class Button:
     """A class for buttons."""
 
-    def __init__(self):
+    def __init__(self, btnElem: splinter.driver.ElementAPI):
         self.text = None
         self.color = None
         self.textColor = None
         self.type = None
         self.redirect = None
         self.html = None
+        self.scrn = None
+        # If we got a button, add it!
+        if btnElem:
+            # Lets not forget the element.
+            self.elem = btnElem
+            # Now lets fill out the apprBtn extras from button.
+            if self.elem:
+                self.text = self.elem.text or self.elem.value
+                self.type = self.elem.tag_name
+                self.html = self.elem._element.get_attribute("outerHTML")
+            if self.elem._element.get_attribute("href"):
+                self.redirect = self.elem._element.get_attribute("href")
+            if self.elem._element.value_of_css_property("background-color"):
+                self.color = Color.from_string(
+                    self.elem._element.value_of_css_property("background-color")
+                ).hex
+            if self.elem._element.value_of_css_property("color"):
+                self.textColor = Color.from_string(
+                    self.elem._element.value_of_css_property("color")
+                ).hex
 
-    @log.catch
-    def importBtn(self, btnElem=None):
-        """Function that converts WebDriverElement "button" into class Button.
+    def screenshot(self, name: str):
+        path = os.getcwd() + f"/result/{runId}/screens/"
+        try:
+            # Make path if not found, we save
+            if not os.path.exists(path):  # Make path if not exists
+                os.makedirs(path)
+            tmpImg = self.elem.screenshot(path + f"/{name}")  # Take a screenshot
+            os.rename(tmpImg, path + f"/{name}")  # Move to correct filename.
+            log.debug("Took screenshot of element!")
+            return path + f"/{name}"
+        except:
+            e = sys.exc_info()[0]
+            log.error("Could not screenshot element, error: {}", e)
 
-        Args:
-            btnElem (WebDriverElement): The "button" element.
-        """
-        # If no button, return.
-        if not btnElem:
-            return
-        # Lets not forget the element.
-        self.elem = btnElem
-        # Now lets fill out the apprBtn extras from button.
-        if self.elem:
-            self.text = self.elem.text or self.elem.value
-            self.type = self.elem.tag_name
-            self.html = self.elem._element.get_attribute("outerHTML")
-        if self.elem._element.get_attribute("href"):
-            self.redirect = self.elem._element.get_attribute("href")
-        if self.elem._element.value_of_css_property("background-color"):
-            self.color = Color.from_string(
-                self.elem._element.value_of_css_property("background-color")
-            ).hex
-        if self.elem._element.value_of_css_property("color"):
-            self.textColor = Color.from_string(
-                self.elem._element.value_of_css_property("color")
-            ).hex
-        self.elem = None
+
+class Iframe:
+    """A class for iframes."""
+
+    def __init__(self, iframeElem: splinter.driver.ElementAPI = None):
+        self.html = None
+        self.url = None
+        # self.cookies = list[dict]
+
+        # If we got a button, add it!
+        if iframeElem:
+            # Lets not forget the element.
+            # self.elem = iframeElem
+            # Now lets fill out the apprBtn extras from button.
+            self.text = iframeElem.html or None
+            self.html = iframeElem._element.get_attribute("outerHTML")
 
 
 class PageResult:
@@ -84,7 +109,7 @@ class PageResult:
         self.failedMsg = None
         self.failedExp = None
         # Cookies and HTML of page.
-        self.cookies = {}  # dict of all cookies.
+        self.cookies = []  # dict of all cookies.
         self.rawHtml = None
         # More information
         self.lang = None
@@ -95,7 +120,7 @@ class PageResult:
         # List of all screenshot paths.
         self.screens = []
 
-    def setApprBtn(self, btn):
+    def setApprBtn(self, btn: Button):
         """Sets the pages approve button.
 
         Args:
@@ -103,7 +128,7 @@ class PageResult:
         """
         self.apprBtn = btn
 
-    def setMoreBtn(self, btn):
+    def setMoreBtn(self, btn: Button):
         """Sets the pages more button.
 
         Args:
@@ -111,7 +136,7 @@ class PageResult:
         """
         self.moreBtn = btn
 
-    def setHtml(self, html):
+    def setHtml(self, html: str):
         """Sets the raw html of page
 
         Args:
@@ -119,7 +144,7 @@ class PageResult:
         """
         self.rawHtml = html
 
-    def setLang(self, lang):
+    def setLang(self, lang: str):
         """Sets the language of the page.
 
         Args:
@@ -127,16 +152,24 @@ class PageResult:
         """
         self.lang = lang
 
+    def setIframe(self, iframe: splinter.driver.ElementAPI):
+        """Sets the iframe for consent.
+
+        Args:
+            iframe (WebDriverElement): The iframe element.
+        """
+        self.iframe = iframe
+
     def setCookies(self, cookies):
         self.cookies = cookies
 
-    def addScreen(self, screen):
+    def addScreen(self, name: str, screenPath: str):
         """Adds a screenshot to this pages list of screens.
 
         Args:
             screen (str): The path to the screenshot.
         """
-        self.screens.append(screen)
+        self.screens.append({"name": name, "path": screenPath})
 
     def toJson(self):
         """Function to return this object as a json object.
@@ -144,12 +177,7 @@ class PageResult:
         Returns:
             str: A json representation of this object.
         """
-        res = {
-            key: value for key, value in self.__dict__.items() if key not in ["browser"]
-        }
-        return json.dumps(
-            res, indent=2, default=lambda x: x.__dict__, ensure_ascii=False
-        )
+        return None
 
 
 @log.catch
@@ -158,7 +186,7 @@ class PageScanner:
     cookie consent notices.
     """
 
-    def __init__(self, browser, url):
+    def __init__(self, browser: splinter.driver.DriverAPI, url):
         self.startedAt = None
         self.endedAt = None
         self.browser = browser
@@ -175,7 +203,8 @@ class PageScanner:
         """
         try:
             self.startedAt = pendulum.now().to_iso8601_string()
-            # self.browser.visit(self.url)
+            self.runId = self._genRunId()
+            runId = self.runId
             # Clear cookies and local storage before run.
             log.debug("Clearing cookies, preparing for run.")
             self.browser.cookies.delete()
@@ -184,9 +213,11 @@ class PageScanner:
             log.debug("Navigated to url.")
             # Lets figure out the language
             self._resolveLang()
+            # Lets check for iframes.
+            iframe = self._iframeHandler()
+            self.res.setIframe(iframe)
             # Lets grab the cookies, mmm.
             cookies = self.browser.cookies.all(True)
-            pprint.pprint(cookies)
             self.res.setCookies(cookies)
             # Lets find our approve and more button.
             trigs = [
@@ -204,9 +235,10 @@ class PageScanner:
             ]
             aBtn = self._findBtnElem(trigs)
             if aBtn:
-                apprBtn = Button()
-                apprBtn.importBtn(aBtn)
+                apprBtn = Button(aBtn)
                 self.res.setApprBtn(apprBtn)
+                scrn = apprBtn.screenshot("approve.png")
+                self.res.addScreen("approve", scrn)
             trigs = [
                 "configure",
                 "manage",
@@ -224,14 +256,10 @@ class PageScanner:
             if not mBtn:
                 mBtn = self._findMoreLink()
             if mBtn:
-                moreBtn = Button()
-                moreBtn.importBtn(mBtn)
+                moreBtn = Button(mBtn)
                 self.res.setMoreBtn(moreBtn)
-            # Lets screenshot our elements
-            aBtnS = aBtn.screenshot(f"{mainPath}/screens/screen.png")
-            mBtnS = mBtn.screenshot(f"{mainPath}/screens/screen.png")
-            self.res.addScreen(aBtnS)
-            self.res.addScreen(mBtnS)
+                scrn = moreBtn.screenshot("more.png")
+                self.res.addScreen("more", scrn)
             self.endedAt = pendulum.now().to_iso8601_string()
         except:
             # Log stuff here.
@@ -296,10 +324,11 @@ class PageScanner:
             if frames:
                 log.debug("Found an iframe, jumping in.")
                 self.browser.driver.switch_to.frame(frames.first["id"])
-                return True
+                return Iframe(frames.first)
+            return None
         except:
             log.debug("Didnt find iframe.")
-        return False
+        return None
 
     @log.catch
     def _resolveLang(self):
@@ -314,6 +343,16 @@ class PageScanner:
         except:
             log.debug("Could not determine language.")
 
+    def _genRunId(self):
+        """Function that generates a runID.
+
+        Returns:
+            str: A unique identifier for this run.
+        """
+        url = self.url.replace("https://", "").replace("http://", "").replace(".", "-")
+        time = pendulum.now().format("YYYY_MM_DD_HH_mm_ss")
+        return time + "-" + url
+
     @log.catch
     def toJson(self):
         """Function to return this object as a json object.
@@ -327,15 +366,40 @@ class PageScanner:
             if key not in ["browser", "elem"]
         }
         return json.dumps(
-            res, indent=2, default=lambda x: x.__dict__, ensure_ascii=False
+            res, indent=2, default=lambda o: "<not serializable>", ensure_ascii=False
         )
+
+
+def setupDriver(hless=False):
+    """Returns a setup browser from splinter, ready for scaping.
+
+    Args:
+        hless (bool, optional): Should the browser run headless. Defaults to False.
+
+    Returns:
+        WebDriver: A splinter browser driver.
+    """
+    browserOptions = wd.ChromeOptions()
+    browserOptions.add_argument("--lang=en-GB")
+    browserOptions.add_argument("--window-size=1920,1080")
+    browserOptions.add_experimental_option(
+        "prefs", {"intl.accept_languages": "en,en_GB"}
+    )
+    browserOptions.headless = hless
+    if hless:
+        log.info("Starting a headless chrome drier...")
+    else:
+        log.info("Starting a visible chrome driver...")
+    return Sbrowser("chrome", options=browserOptions)
 
 
 if __name__ == "__main__":
     Logger(log)
     print("Creating test obj..")
-    browser = Sbrowser("chrome", headless=True)
-    res = PageScanner(browser, "https://cnn.com")
-    res.doScan()
-    print(res.toJson())
-    browser.quit()
+    browser = setupDriver(True)
+    url = "https://vice.com"
+    with log.contextualize(url=url):
+        res = PageScanner(browser, url)
+        res.doScan()
+        print(res.toJson())
+        browser.quit()
