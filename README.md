@@ -1,5 +1,5 @@
 # CCrawler [![CodeFactor](https://www.codefactor.io/repository/github/filipnyquist/ccrawler/badge?s=d646529acb9f30380abfc32df4ce462c37701a12)](https://www.codefactor.io/repository/github/filipnyquist/ccrawler)
-displayA GPDR/Cookie consent crawler made for an exam project.
+A GPDR/Cookie consent crawler made for an exam project.
 
 ## Prerequisites
 * Python 3.9+
