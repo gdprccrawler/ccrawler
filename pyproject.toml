@@ -12,6 +12,7 @@ selenium = "^3.141.0"
 loguru = "^0.5.3"
 pendulum = "^2.1.2"
 langdetect = "^1.0.8"
+jsonpickle = "^2.0.0"
 
 [tool.poetry.dev-dependencies]
 
