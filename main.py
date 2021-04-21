@@ -10,6 +10,7 @@ from loguru import logger as log
 from splinter import Browser as Sbrowser
 from selenium import webdriver as wd
 from selenium.webdriver.support.color import Color
+from deep_translator import GoogleTranslator
 
 mainPath = os.path.abspath(os.getcwd())
 runId = None
@@ -67,6 +68,7 @@ class Button:
                     self.elem._element.value_of_css_property("color")
                 ).hex
 
+    @log.catch
     def screenshot(self, name: str):
         path = os.getcwd() + f"/result/{runId}/screens/"
         try:
@@ -79,7 +81,7 @@ class Button:
             return path + f"/{name}"
         except:
             e = sys.exc_info()[0]
-            log.error("Could not screenshot element, error: {}", e)
+            log.error('An exception occurred: {}'.format(error))
 
 
 class Iframe:
@@ -220,6 +222,9 @@ class PageScanner:
             cookies = self.browser.cookies.all(True)
             self.res.setCookies(cookies)
             # Lets find our approve and more button.
+
+
+            
             trigs = [
                 "iagree",
                 "agree",
@@ -227,6 +232,7 @@ class PageScanner:
                 "iaccept",
                 "acceptcookies",
                 "allow",
+                "continue",
                 "acceptall",
                 "jagförstår",
                 "ok,stäng",
@@ -397,7 +403,7 @@ if __name__ == "__main__":
     Logger(log)
     print("Creating test obj..")
     browser = setupDriver(True)
-    url = "https://vice.com"
+    url = "https://www.jdsupra.com/"
     with log.contextualize(url=url):
         res = PageScanner(browser, url)
         res.doScan()
