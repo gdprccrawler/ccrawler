@@ -305,7 +305,11 @@ requests = "*"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.9"
+<<<<<<< HEAD
 content-hash = "b1798af2013426eab5bec5ec8a18ecfa94551d52d17bcd4fe2a4c6f62224588b"
+=======
+content-hash = "12bd2fcb1cecce4bbb69293eb5414d8a53cd9b5f6c2f8bcc0de9bfc3276d459a"
+>>>>>>> 914f9b073495de09453b3f66bf950e3d709d6d8f
 
 [metadata.files]
 beautifulsoup4 = [

@@ -5,6 +5,7 @@ import pprint
 import sys
 import os
 import splinter
+import csv
 from langdetect import detect
 from loguru import logger as log
 from splinter import Browser as Sbrowser
@@ -12,8 +13,10 @@ from selenium import webdriver as wd
 from selenium.webdriver.support.color import Color
 from deep_translator import GoogleTranslator
 
+from itertools import islice
+
 mainPath = os.path.abspath(os.getcwd())
-runId = None
+runId = 0
 
 
 class Logger:
@@ -269,7 +272,9 @@ class PageScanner:
             self.endedAt = pendulum.now().to_iso8601_string()
         except:
             # Log stuff here.
-            log.error("WOOPS, SOMETHING WENT WRONG...")
+            e = sys.exc_info()[0]
+            log.error('An exception occurred: {}'.format(error))
+            
 
     @log.catch
     def _findBtnElem(self, triggers):
@@ -401,11 +406,22 @@ def setupDriver(hless=False):
 
 if __name__ == "__main__":
     Logger(log)
-    print("Creating test obj..")
-    browser = setupDriver(True)
-    url = "https://www.jdsupra.com/"
-    with log.contextualize(url=url):
-        res = PageScanner(browser, url)
-        res.doScan()
-        print(res.toJson())
-        browser.quit()
+    url_list = []
+    with open("url_list.csv","r") as link_csv_file:
+        csv_reader = csv.DictReader(link_csv_file)
+
+        header = next(csv_reader)
+        if header != None:
+            for  link in islice(csv_reader, 10):
+                http_string = "https://" + link['Domain']
+                url_list.append(http_string)
+                
+    for url in url_list:
+        runId += 1
+        print("Creating test obj..")
+        browser = setupDriver(True)
+        with log.contextualize(url=url):
+            res = PageScanner(browser, url)
+            res.doScan()
+            print(res.toJson())
+            browser.quit()
