@@ -13,14 +13,12 @@ loguru = "^0.5.3"
 pendulum = "^2.1.2"
 langdetect = "^1.0.8"
 jsonpickle = "^2.0.0"
-<<<<<<< HEAD
 deep-translator = "^1.4.2"
 Pillow = "^8.2.0"
 yandex-translater = "^6.0"
 textblob = "^0.15.3"
-=======
-Pillow = "^8.2.0"
->>>>>>> 914f9b073495de09453b3f66bf950e3d709d6d8f
+pymongo = "^3.11.3"
+black = "^21.4b1"
 
 [tool.poetry.dev-dependencies]
 

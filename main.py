@@ -7,12 +7,13 @@ import os
 import splinter
 import csv
 from langdetect import detect
+from PIL import Image
 from loguru import logger as log
 from splinter import Browser as Sbrowser
 from selenium import webdriver as wd
 from selenium.webdriver.support.color import Color
-from deep_translator import GoogleTranslator
-
+from pymongo import MongoClient, ReturnDocument
+from datetime import datetime
 from itertools import islice
 
 mainPath = os.path.abspath(os.getcwd())
@@ -40,17 +41,110 @@ class Logger:
         log.info("Starting log...")
 
 
+class DatabaseManager:
+    """This class provides connection to the MongoDB database."""
+
+    def __init__(self, db_url=None):
+        """Init class for DatabaseManager
+
+        Args:
+            db_url (string, optional): Database connection string. Defaults to localhost:27017.
+        """
+        try:
+            log.debug("Connecting to database...")
+            self.client = MongoClient(db_url)
+            self.db = self.client["ccrawler"]
+            self.runs = self.db["runs"]
+            status = self.status()
+            log.debug(
+                "Ready! Running MongoDB {} on host {}.",
+                status["version"],
+                status["host"],
+                status["uptime"],
+            )
+        except Exception as e:
+            log.exception(e)
+
+    def status(self):
+        try:
+            status = self.db.command("serverStatus")
+            return status
+        except Exception as e:
+            log.exception(e)
+
+    def create_run(self, url):
+        """This function generates a Object for a new run, and saves it in the database.
+
+        Returns:
+            string: The objectId for the generated object.
+        """
+        try:
+            new_run = {
+                "url": url,
+                "status": "startingRun",
+                "runStartTime": datetime.now(),
+            }
+            obj_id = self.runs.insert_one(new_run).inserted_id
+            return obj_id
+        except Exception as e:
+            log.exception(e)
+
+    def modify_run(self, run_id, data):
+        """This function modifies a run.
+
+        Args:
+            runId (string): the run to edit (objectId).
+
+        Returns:
+            documentId: The id of the doc modified.
+        """
+        try:
+            run = self.runs.find_one_and_update(
+                {"_id": run_id}, {"$set": data}, return_document=ReturnDocument.AFTER
+            )
+            return run
+        except Exception as e:
+            log.exception(e)
+
+    def get_run(self, run_id):
+        try:
+            run = self.runs.find_one({"_id": run_id})
+            return run
+        except Exception as e:
+            log.exception(e)
+
+    def get_last_run_for_url(self, url):
+        try:
+            run = self.runs.find({"url": url}).sort("runStartTime", -1).limit(1)
+            return run
+        except Exception as e:
+            log.exception(e)
+
+    def get_runs_for_url(self, url, limit=None):
+        try:
+            if limit:
+                runs = (
+                    self.runs.find({"url": url}).sort("runStartTime", -1).limit(limit)
+                )
+            else:
+                runs = self.runs.find({"url": url}).sort("runStartTime", -1)
+            return runs
+        except Exception as e:
+            log.exception(e)
+
+
 class Button:
     """A class for buttons."""
 
     def __init__(self, btnElem: splinter.driver.ElementAPI):
-        self.text = None
-        self.color = None
-        self.textColor = None
-        self.type = None
-        self.redirect = None
-        self.html = None
-        self.scrn = None
+        self.text = None  # The content of the button text.
+        self.color = None  # The color of the button.
+        self.textColor = None  # The color of the text.
+        self.type = None  # The type of button.
+        self.redirect = None  # Is the button a redirect to another page?
+        self.html = None  # Raw HTML of button.
+        self.area = None  # Height x Width in pixels.
+        self.scrn = None  # A screenshot of the button.
         # If we got a button, add it!
         if btnElem:
             # Lets not forget the element.
@@ -60,6 +154,7 @@ class Button:
                 self.text = self.elem.text or self.elem.value
                 self.type = self.elem.tag_name
                 self.html = self.elem._element.get_attribute("outerHTML")
+                self.pxarea = self.elem._element.value_of_css_property("naturalWidth")
             if self.elem._element.get_attribute("href"):
                 self.redirect = self.elem._element.get_attribute("href")
             if self.elem._element.value_of_css_property("background-color"):
@@ -71,20 +166,35 @@ class Button:
                     self.elem._element.value_of_css_property("color")
                 ).hex
 
-    @log.catch
     def screenshot(self, name: str):
-        path = os.getcwd() + f"/result/{runId}/screens/"
+        path = os.getcwd() + f"/result/screens/"
         try:
             # Make path if not found, we save
             if not os.path.exists(path):  # Make path if not exists
                 os.makedirs(path)
-            tmpImg = self.elem.screenshot(path + f"/{name}")  # Take a screenshot
-            os.rename(tmpImg, path + f"/{name}")  # Move to correct filename.
+            tmpImg = self.elem.screenshot(path + name)  # Take a screenshot
+            os.rename(tmpImg, path + name)  # Move to correct filename.
+            # Get size from screenshot, as CSS isn´t reliable at all times...
+            with Image.open(path + name) as img:
+                w, h = img.size
+                self.area = w * h
+            self.scrn = path + name
             log.debug("Took screenshot of element!")
-            return path + f"/{name}"
         except:
             e = sys.exc_info()[0]
-            log.error('An exception occurred: {}'.format(error))
+            log.error("Could not screenshot element, error: {}", e)
+
+    def getMeta(self):
+        return {
+            "text": self.text,
+            "color": self.color,
+            "textColor": self.textColor,
+            "type": self.type,
+            "redirect": self.redirect,
+            "html": self.html,
+            "scrn": self.scrn,
+            "area": self.area,
+        }
 
 
 class Iframe:
@@ -191,12 +301,27 @@ class PageScanner:
     cookie consent notices.
     """
 
-    def __init__(self, browser: splinter.driver.DriverAPI, url):
-        self.startedAt = None
-        self.endedAt = None
+    def __init__(
+        self, browser: splinter.driver.DriverAPI, db: DatabaseManager, url: str
+    ):
         self.browser = browser
         self.url = url
-        self.res = PageResult(self.url)
+        self.db = db
+        # Timings.
+        self.startedAt = None
+        self.endedAt = None
+        # Metadata.
+        self.url = url  # The url we start at.
+        self.lang = None  # The website language.
+        self.scrn = None  # Screenshot of first load.
+        self.consentType = None  # The consent type.
+        # Sub data clases - buttons and notice.
+        self.consentBox = None  # The cosent box/popup, if any was found.
+        self.approveBtn = None  # The approve button, if any was found.
+        self.moreBtn = None  # The more/settings button, if any was found.
+        # Cookies.
+        self.startCookies = None  # The cookies that gets set at start.
+        self.endCookies = None  # The cookies after the run has been done.
 
     @log.catch
     def doScan(self, followLinks=True, screenshot=True):
@@ -207,27 +332,25 @@ class PageScanner:
             screenshot (bool, optional): If we should screenshot all found elements. Defaults to True.
         """
         try:
-            self.startedAt = pendulum.now().to_iso8601_string()
-            self.runId = self._genRunId()
-            runId = self.runId
+            self.startedAt = datetime.now()
+            self.runId = self.db.create_run(self.url)
             # Clear cookies and local storage before run.
-            log.debug("Clearing cookies, preparing for run.")
+            log.debug("Clearing cookies, preparing for run...")
             self.browser.cookies.delete()
             # Navigate to page.
             self.browser.visit(self.url)
             log.debug("Navigated to url.")
             # Lets figure out the language
             self._resolveLang()
+            # Screenshot
+            self._screenshot(str(self.runId) + "_first.png")
             # Lets check for iframes.
             iframe = self._iframeHandler()
-            self.res.setIframe(iframe)
+            self.iframe = iframe
             # Lets grab the cookies, mmm.
-            cookies = self.browser.cookies.all(True)
-            self.res.setCookies(cookies)
+            self.startCookies = self.browser.cookies.all(True)
             # Lets find our approve and more button.
 
-
-            
             trigs = [
                 "iagree",
                 "agree",
@@ -245,9 +368,8 @@ class PageScanner:
             aBtn = self._findBtnElem(trigs)
             if aBtn:
                 apprBtn = Button(aBtn)
-                self.res.setApprBtn(apprBtn)
-                scrn = apprBtn.screenshot("approve.png")
-                self.res.addScreen("approve", scrn)
+                apprBtn.screenshot(str(self.runId) + "_approve.png")
+                self.approveBtn = apprBtn.getMeta()
             trigs = [
                 "configure",
                 "manage",
@@ -266,15 +388,48 @@ class PageScanner:
                 mBtn = self._findMoreLink()
             if mBtn:
                 moreBtn = Button(mBtn)
-                self.res.setMoreBtn(moreBtn)
-                scrn = moreBtn.screenshot("more.png")
-                self.res.addScreen("more", scrn)
+                moreBtn.screenshot(str(self.runId) + "_more.png")
+                self.moreBtn = moreBtn.getMeta()
             self.endedAt = pendulum.now().to_iso8601_string()
+            self.db.modify_run(
+                self.runId,
+                {
+                    "status": "runDone",
+                    "startedAt": self.startedAt,
+                    "endedAt": self.endedAt,
+                    "lang": self.lang,
+                    "scrn": self.scrn,
+                    "consentType": self.consentType,
+                    "consentBox": self.consentBox,
+                    "approveBtn": self.approveBtn,
+                    "moreBtn": self.moreBtn,
+                    "startCookies": self.startCookies,
+                    "endCookies": self.endCookies,
+                },
+            )
+            log.info("DONE WITH RUN!")
+            # Done with first crawl, now if we had settings lets check them out.
+            # TODO: Start looking for settings, check flowchart #3.
         except:
             # Log stuff here.
             e = sys.exc_info()[0]
-            log.error('An exception occurred: {}'.format(error))
-            
+            log.exception(e)
+
+    @log.catch
+    def _screenshot(self, name: str):
+        path = os.getcwd() + f"/result/screens/"
+        try:
+            # Make path if not found, we save
+            if not os.path.exists(path):  # Make path if not exists
+                os.makedirs(path)
+            tmpImg = self.browser.screenshot(path + name)  # Take a screenshot
+            os.rename(tmpImg, path + name)  # Move to correct filename.
+            # Get size from screenshot, as CSS isn´t reliable at all times...
+            self.scrn = path + name
+            log.debug("Took screenshot of page!")
+        except:
+            e = sys.exc_info()[0]
+            log.error("Could not screenshot page, error: {}", e)
 
     @log.catch
     def _findBtnElem(self, triggers):
@@ -320,7 +475,7 @@ class PageScanner:
         return None  # None found
 
     @log.catch
-    def _iframeHandler(self):
+    def _iframeHandler(self):  # TODO: Cleamup handler, make iframe agnostic.
         """This function handles if there is a popup iframe of a consent,
         as some pages uses CMSes that are loded via iframe. If iframe is found,
         we just jump in.
@@ -335,7 +490,7 @@ class PageScanner:
             if frames:
                 log.debug("Found an iframe, jumping in.")
                 self.browser.driver.switch_to.frame(frames.first["id"])
-                return Iframe(frames.first)
+                return True
             return None
         except:
             log.debug("Didnt find iframe.")
@@ -349,20 +504,9 @@ class PageScanner:
             textBody = self.browser.evaluate_script(
                 "window.document.body.innerText.valueOf();"
             )
-            lang = detect(textBody)
-            self.res.setLang(lang)
+            self.lang = detect(textBody)
         except:
             log.debug("Could not determine language.")
-
-    def _genRunId(self):
-        """Function that generates a runID.
-
-        Returns:
-            str: A unique identifier for this run.
-        """
-        url = self.url.replace("https://", "").replace("http://", "").replace(".", "-")
-        time = pendulum.now().format("YYYY_MM_DD_HH_mm_ss")
-        return time + "-" + url
 
     @log.catch
     def toJson(self):
@@ -406,22 +550,22 @@ def setupDriver(hless=False):
 
 if __name__ == "__main__":
     Logger(log)
+    db = DatabaseManager()
     url_list = []
-    with open("url_list.csv","r") as link_csv_file:
+    with open("url_list.csv", "r") as link_csv_file:
         csv_reader = csv.DictReader(link_csv_file)
 
         header = next(csv_reader)
         if header != None:
-            for  link in islice(csv_reader, 10):
-                http_string = "https://" + link['Domain']
+            for link in islice(csv_reader, 10):
+                http_string = "https://" + link["Domain"]
                 url_list.append(http_string)
-                
+
     for url in url_list:
         runId += 1
         print("Creating test obj..")
         browser = setupDriver(True)
         with log.contextualize(url=url):
-            res = PageScanner(browser, url)
+            res = PageScanner(browser, db, url)
             res.doScan()
-            print(res.toJson())
             browser.quit()
