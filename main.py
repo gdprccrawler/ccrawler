@@ -6,6 +6,7 @@ import sys
 import os
 import splinter
 import csv
+import selenium
 from langdetect import detect
 from PIL import Image
 from loguru import logger as log
@@ -15,9 +16,39 @@ from selenium.webdriver.support.color import Color
 from pymongo import MongoClient, ReturnDocument
 from datetime import datetime
 from itertools import islice
+from detectors import find_cookie_notice
 
 mainPath = os.path.abspath(os.getcwd())
 runId = 0
+
+
+def genPathForScreen(url, name: str):
+    # Make sure we do not have https/http with the url.
+    url = url.replace("https://", "")
+    url = url.replace("http://", "")
+    url = url.replace("/", "")
+    # Dots to -.
+    url = url.replace(".", "-")
+    # Get time.
+    timestamp = (
+        time.strftime("%a")
+        + "_"
+        + time.strftime("%d")
+        + "_"
+        + time.strftime("%b")
+        + "_"
+        + time.strftime("%H")
+        + "_"
+        + time.strftime("%M")
+    )
+    full_path = (
+        os.getcwd() + "/result/screens/" + url + "_" + timestamp + "_" + name + ".png"
+    )
+    # Make sure path exists...
+    dir = os.path.dirname(full_path)
+    if not os.path.exists(dir):
+        os.makedirs(dir)
+    return full_path
 
 
 class Logger:
@@ -133,17 +164,135 @@ class DatabaseManager:
             log.exception(e)
 
 
+class Consent:
+    """A class for consents."""
+
+    def __init__(
+        self, url, consent_elem: selenium.webdriver.remote.webelement.WebElement
+    ):
+        self.url = url  # Needed for screenshot cap.
+        self.elem = consent_elem  # The content of the button text.
+        self.size = (
+            self.elem.size
+        )  # The size of the consent notice, as webdriver rect dirct.
+        self.links = []
+        self.html = self.elem.get_attribute("outerHTML")
+        self.apprBtn = None
+        self.apprBtnMeta = None
+        self.moreBtn = None
+        self.moreBtnMeta = None
+        self.scrn = None
+        # Look for links
+        for elem in self.elem.find_elements_by_partial_link_text(""):
+            self.links.append(elem.get_attribute("href"))
+        # Lets screenshot ourselves.
+        self.screenshot()
+        # Lets find our buttons.
+        self.find_buttons()
+
+    def screenshot(self):
+        # Takes a screenshot of the current notice/element, saves in results
+        # Returns path to screenshot.
+        full_path = genPathForScreen(self.url, "notice")
+        log.debug(full_path)
+        scrn = self.elem.screenshot(full_path)
+        log.debug(scrn)
+        if scrn:
+            self.scrn = full_path
+            return True
+        else:
+            log.debug("Could not screenshot element!")
+            return False
+
+    def find_buttons(self):
+        apprTrigs = [
+            "approve",
+            "okay",
+            "accept",
+            "agree",
+            "allow",
+            "continue",
+            "godkänn",
+            "förstår",
+            "stäng",
+        ]
+        apprBtn = self._findBtnElem(apprTrigs)
+        if apprBtn:
+            log.debug("FOUND APPROVE BUTTON!")
+            apprBtn = Button(self.url, apprBtn)
+            apprBtn.screenshot("approve")
+            self.apprBtn = apprBtn
+            self.apprBtnMeta = apprBtn.getMeta()
+        moreTrigs = [
+            "configure",
+            "manage",
+            "settings",
+            "customize",
+            "customise",
+            "inställningar",
+            "more",
+            "mer",
+        ]
+        moreBtn = self._findBtnElem(moreTrigs)
+        if moreBtn:
+            log.debug("FOUND MORE BUTTON!")
+            moreBtn = Button(self.url, moreBtn)
+            moreBtn.screenshot("more")
+            self.moreBtn = moreBtn
+            self.moreBtnMeta = moreBtn.getMeta()
+
+    @log.catch
+    def _findBtnElem(self, triggers):
+        """Tries to find a button on page containg any string in input list.
+
+        Args:
+            triggers (list): A list of strings to look for.
+
+        Returns:
+            WebDriverElement: The found element, if any.
+        """
+        elemTypes = ["button", "input", "a"]
+        for t in elemTypes:
+            log.debug("Looking for element by type {}.", t)
+            elems = self.elem.find_elements_by_tag_name(t)
+            for elem in elems:
+                elemText = elem.text or elem.get_attribute("value")
+                if not elemText:
+                    continue
+                # Make lowercase, remove spaces,tabs,newlines,non alphab chars.
+                elemText = "".join(char for char in elemText if char.isalpha())
+                elemText = "".join(elemText.lower().split())
+                # Compare against list
+                for trig in triggers:
+                    if trig in elemText:
+                        return elem
+        # Did not find any element.
+        log.debug("Did not find any element.")
+        return None
+
+    def getMeta(self):
+        return {
+            "size": self.size,
+            "links": self.links,
+            "html": self.html,
+            "apprBtn": self.apprBtnMeta,
+            "moreBtn": self.moreBtnMeta,
+            "scrn": self.scrn,
+        }
+
+
 class Button:
     """A class for buttons."""
 
-    def __init__(self, btnElem: splinter.driver.ElementAPI):
+    def __init__(self, url, btnElem: selenium.webdriver.remote.webelement.WebElement):
+        self.url = url  # Url for screenshot cap.
         self.text = None  # The content of the button text.
         self.color = None  # The color of the button.
         self.textColor = None  # The color of the text.
         self.type = None  # The type of button.
         self.redirect = None  # Is the button a redirect to another page?
         self.html = None  # Raw HTML of button.
-        self.area = None  # Height x Width in pixels.
+        self.size = None  # Size.
         self.scrn = None  # A screenshot of the button.
         # If we got a button, add it!
         if btnElem:
@@ -151,38 +300,33 @@ class Button:
             self.elem = btnElem
             # Now lets fill out the apprBtn extras from button.
             if self.elem:
-                self.text = self.elem.text or self.elem.value
+                self.text = self.elem.text or self.elem.get_attribute("value")
                 self.type = self.elem.tag_name
-                self.html = self.elem._element.get_attribute("outerHTML")
-                self.pxarea = self.elem._element.value_of_css_property("naturalWidth")
-            if self.elem._element.get_attribute("href"):
-                self.redirect = self.elem._element.get_attribute("href")
-            if self.elem._element.value_of_css_property("background-color"):
+                self.html = self.elem.get_attribute("outerHTML")
+            if self.elem.size:
+                self.size = self.elem.size
+            if self.elem.get_attribute("href"):
+                self.redirect = self.elem.get_attribute("href")
+            if self.elem.value_of_css_property("background-color"):
                 self.color = Color.from_string(
-                    self.elem._element.value_of_css_property("background-color")
+                    self.elem.value_of_css_property("background-color")
                 ).hex
-            if self.elem._element.value_of_css_property("color"):
+            if self.elem.value_of_css_property("color"):
                 self.textColor = Color.from_string(
-                    self.elem._element.value_of_css_property("color")
+                    self.elem.value_of_css_property("color")
                 ).hex
 
     def screenshot(self, name: str):
-        path = os.getcwd() + f"/result/screens/"
-        try:
-            # Make path if not found, we save
-            if not os.path.exists(path):  # Make path if not exists
-                os.makedirs(path)
-            tmpImg = self.elem.screenshot(path + name)  # Take a screenshot
-            os.rename(tmpImg, path + name)  # Move to correct filename.
-            # Get size from screenshot, as CSS isn´t reliable at all times...
-            with Image.open(path + name) as img:
-                w, h = img.size
-                self.area = w * h
-            self.scrn = path + name
-            log.debug("Took screenshot of element!")
-        except:
-            e = sys.exc_info()[0]
-            log.error("Could not screenshot element, error: {}", e)
+        # Takes a screenshot of the current notice/element, saves in results
+        # Returns path to screenshot.
+        full_path = genPathForScreen(self.url, name)
+        scrn = self.elem.screenshot(full_path)
+        if scrn:
+            self.scrn = full_path
+            return True
+        else:
+            log.debug("Could not screenshot element!")
+            return False
 
     def getMeta(self):
         return {
@@ -193,7 +337,7 @@ class Button:
             "redirect": self.redirect,
             "html": self.html,
             "scrn": self.scrn,
-            "area": self.area,
+            "size": self.size,
         }
 
 
@@ -307,6 +451,8 @@ class PageScanner:
         self.browser = browser
         self.url = url
         self.db = db
+        # Window size.
+        self.windowSize = self.browser.driver.get_window_size()
         # Timings.
         self.startedAt = None
         self.endedAt = None
@@ -314,11 +460,7 @@ class PageScanner:
         self.url = url  # The url we start at.
         self.lang = None  # The website language.
         self.scrn = None  # Screenshot of first load.
-        self.consentType = None  # The consent type.
-        # Sub data clases - buttons and notice.
-        self.consentBox = None  # The cosent box/popup, if any was found.
-        self.approveBtn = None  # The approve button, if any was found.
-        self.moreBtn = None  # The more/settings button, if any was found.
+        self.consent = None  # Consent element.
         # Cookies.
         self.startCookies = None  # The cookies that gets set at start.
         self.endCookies = None  # The cookies after the run has been done.
@@ -343,70 +485,52 @@ class PageScanner:
             # Lets figure out the language
             self._resolveLang()
             # Screenshot
-            self._screenshot(str(self.runId) + "_first.png")
+            self.browser.driver.save_screenshot(genPathForScreen(self.url, "full"))
+            self.scrn = genPathForScreen(self.url, "full")
             # Lets check for iframes.
             iframe = self._iframeHandler()
             self.iframe = iframe
             # Lets grab the cookies, mmm.
             self.startCookies = self.browser.cookies.all(True)
-            # Lets find our approve and more button.
+            # Lets find our consent notice.
+            log.info("Looking for cookie notice!")
+            consent = find_cookie_notice(self.browser)
+            if consent:
+                self.consent = Consent(self.url, consent)
+                # We have buttons, we are done for now :)
+                self.endedAt = datetime.now()
+                self.db.modify_run(
+                    self.runId,
+                    {
+                        "status": "runDone",
+                        "browserSize": self.windowSize,
+                        "startedAt": self.startedAt,
+                        "endedAt": self.endedAt,
+                        "lang": self.lang,
+                        "scrn": self.scrn,
+                        "notice": self.consent.getMeta(),
+                        "startCookies": self.startCookies,
+                        "endCookies": self.endCookies,
+                    },
+                )
+            else:
+                # We have no notice, lets skip this page and return error to db.
+                self.endedAt = datetime.now()
+                self.db.modify_run(
+                    self.runId,
+                    {
+                        "status": "noNoticeFound",
+                        "browserSize": self.windowSize,
+                        "startedAt": self.startedAt,
+                        "endedAt": self.endedAt,
+                        "lang": self.lang,
+                        "scrn": self.scrn,
+                        "startCookies": self.startCookies,
+                        "endCookies": self.endCookies,
+                    },
+                )
+                return None
 
-            trigs = [
-                "iagree",
-                "agree",
-                "accept",
-                "iaccept",
-                "acceptcookies",
-                "allow",
-                "continue",
-                "acceptall",
-                "jagförstår",
-                "ok,stäng",
-                "stäng",
-                "tilladalle",
-            ]
-            aBtn = self._findBtnElem(trigs)
-            if aBtn:
-                apprBtn = Button(aBtn)
-                apprBtn.screenshot(str(self.runId) + "_approve.png")
-                self.approveBtn = apprBtn.getMeta()
-            trigs = [
-                "configure",
-                "manage",
-                "managecookies",
-                "configurepreferences",
-                "managetrackers",
-                "managesettings",
-                "settings",
-                "läsmer",
-                "inställningar",
-                "hanterainställningar",
-                "tilladvalge",
-            ]
-            mBtn = self._findBtnElem(trigs)
-            if not mBtn:
-                mBtn = self._findMoreLink()
-            if mBtn:
-                moreBtn = Button(mBtn)
-                moreBtn.screenshot(str(self.runId) + "_more.png")
-                self.moreBtn = moreBtn.getMeta()
-            self.endedAt = pendulum.now().to_iso8601_string()
-            self.db.modify_run(
-                self.runId,
-                {
-                    "status": "runDone",
-                    "startedAt": self.startedAt,
-                    "endedAt": self.endedAt,
-                    "lang": self.lang,
-                    "scrn": self.scrn,
-                    "consentType": self.consentType,
-                    "consentBox": self.consentBox,
-                    "approveBtn": self.approveBtn,
-                    "moreBtn": self.moreBtn,
-                    "startCookies": self.startCookies,
-                    "endCookies": self.endCookies,
-                },
-            )
             log.info("DONE WITH RUN!")
             # Done with first crawl, now if we had settings lets check them out.
             # TODO: Start looking for settings, check flowchart #3.
@@ -414,51 +538,6 @@ class PageScanner:
             # Log stuff here.
             e = sys.exc_info()[0]
             log.exception(e)
-
-    @log.catch
-    def _screenshot(self, name: str):
-        path = os.getcwd() + f"/result/screens/"
-        try:
-            # Make path if not found, we save
-            if not os.path.exists(path):  # Make path if not exists
-                os.makedirs(path)
-            tmpImg = self.browser.screenshot(path + name)  # Take a screenshot
-            os.rename(tmpImg, path + name)  # Move to correct filename.
-            # Get size from screenshot, as CSS isn´t reliable at all times...
-            self.scrn = path + name
-            log.debug("Took screenshot of page!")
-        except:
-            e = sys.exc_info()[0]
-            log.error("Could not screenshot page, error: {}", e)
-
-    @log.catch
-    def _findBtnElem(self, triggers):
-        """Tries to find a button on page containg any string in input list.
-
-        Args:
-            triggers (list): A list of strings to look for.
-
-        Returns:
-            WebDriverElement: The found element, if any.
-        """
-        elemTypes = ["button", "input", "a"]
-        for t in elemTypes:
-            log.debug("Looking for element by type {}.", t)
-            elems = self.browser.find_by_tag(t)
-            for elem in elems:
-                elemText = elem.value or elem.text
-                if not elemText:
-                    continue
-                # Make lowercase, remove spaces,tabs,newlines,non alphab chars.
-                elemText = "".join(char for char in elemText if char.isalpha())
-                elemText = "".join(elemText.lower().split())
-                # Compare against list
-                if elemText in triggers:
-                    log.debug("Found element, on match {}.", elemText)
-                    return elem
-        # Did not find any element.
-        log.debug("Did not find any element.")
-        return None
 
     @log.catch
     def _findMoreLink(self):
@@ -540,6 +619,7 @@ def setupDriver(hless=False):
     browserOptions.add_experimental_option(
         "prefs", {"intl.accept_languages": "en,en_GB"}
     )
+    browserOptions.add_experimental_option("w3c", False)
     browserOptions.headless = hless
     if hless:
         log.info("Starting a headless chrome drier...")

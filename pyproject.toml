@@ -19,6 +19,7 @@ yandex-translater = "^6.0"
 textblob = "^0.15.3"
 pymongo = "^3.11.3"
 black = "^21.4b1"
+python-abp = "^0.2.0"
 
 [tool.poetry.dev-dependencies]
 

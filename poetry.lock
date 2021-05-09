@@ -218,6 +218,14 @@ tls = ["ipaddress"]
 zstd = ["zstandard"]
 
 [[package]]
+name = "python-abp"
+version = "0.2.0"
+description = "A library for working with Adblock Plus filter lists."
+category = "main"
+optional = false
+python-versions = "*"
+
+[[package]]
 name = "python-dateutil"
 version = "2.8.1"
 description = "Extensions to the standard Python datetime module"
@@ -376,7 +384,7 @@ requests = "*"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.9"
-content-hash = "606bd178d7876cfad9af7afb1958597060c584a7bcee5755419f7cc4c3b6fa9d"
+content-hash = "c0021396734b47d15a4f4b1a3638ccba213270688de95d8b1afd3902df4eb4ed"
 
 [metadata.files]
 appdirs = [
@@ -567,6 +575,9 @@ pymongo = [
     {file = "pymongo-3.11.3-cp39-cp39-win_amd64.whl", hash = "sha256:ee42a8f850143ae7c67ea09a183a6a4ad8d053e1dbd9a1134e21a7b5c1bc6c73"},
     {file = "pymongo-3.11.3-py2.7-macosx-10.14-intel.egg", hash = "sha256:7edff02e44dd0badd749d7342e40705a398d98c5d8f7570f57cff9568c2351fa"},
     {file = "pymongo-3.11.3.tar.gz", hash = "sha256:db5098587f58fbf8582d9bda2462762b367207246d3e19623782fb449c3c5fcc"},
+]
+python-abp = [
+    {file = "python-abp-0.2.0.tar.gz", hash = "sha256:f36d0e9fdc089587c26036e0403f36d729395fc9f4dbce45baf3a493d1de8112"},
 ]
 python-dateutil = [
     {file = "python-dateutil-2.8.1.tar.gz", hash = "sha256:73ebfe9dbf22e832286dafa60473e4cd239f8592f699aa5adaf10050e6e1823c"},
