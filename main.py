@@ -16,7 +16,8 @@ from selenium.webdriver.support.color import Color
 from pymongo import MongoClient, ReturnDocument
 from datetime import datetime
 from itertools import islice
-from detectors import find_cookie_notice
+from readability.readability import Readability
+from detectors import find_cookie_notice, find_settings
 
 mainPath = os.path.abspath(os.getcwd())
 runId = 0
@@ -164,6 +165,104 @@ class DatabaseManager:
             log.exception(e)
 
 
+class ConsentSettings:
+    """A class for consent settings."""
+
+    def __init__(
+        self,
+        url,
+        consent_elem: selenium.webdriver.remote.webelement.WebElement,
+    ):
+        self.elem = consent_elem  # The content of the button text.
+        self.html = self.elem.get_attribute("outerHTML")
+        self.text = self.elem.text
+        self.hasDenyAll = False
+        self.hasAcceptAll = False
+        self.readabilityARI = None
+        self.readabilityFLESH = None
+        self.scrn = None
+        # Check if we have deny/accept all buttons.
+        self.hasDenyAll = self._find_deny_all()
+        self.hasAcceptAll = self._find_appr_all()
+        # Lets define our readability by ARI and FLESH.
+        r = Readability(self.text)
+        self.readabilityARI = r.ari().__dict__
+        self.readabilityFLESH = r.flesch().__dict__
+        # Lets see if we can find any checkboxes...
+        self.totalCheckboxes = 0
+        self.checkedCheckboxes = 0
+        total_checkboxes = self.elem.find_elements_by_css_selector(
+            "input[type='checkbox']"
+        )
+        checked_checkboxes = self.elem.find_elements_by_css_selector(
+            "input[type='checkbox']:checked"
+        )
+        self.totalCheckboxes = len(total_checkboxes)
+        self.checkedCheckboxes = len(checked_checkboxes)
+
+    def _find_deny_all(self):
+        trigs = ["denyall", "alldeny", "rejectall", "nekaalla", "allaneka"]
+        btn = self._findBtnElem(trigs)
+        if btn:
+            return True
+        return False
+
+    def _find_appr_all(self):
+        trigs = [
+            "approveall",
+            "allenable",
+            "acceptall",
+            "enableall",
+            "tillåtalla",
+            "godkännalla",
+        ]
+        btn = self._findBtnElem(trigs)
+        if btn:
+            return True
+        return False
+
+    @log.catch
+    def _findBtnElem(self, triggers):
+        """Tries to find a button on page containg any string in input list.
+
+        Args:
+            triggers (list): A list of strings to look for.
+
+        Returns:
+            WebDriverElement: The found element, if any.
+        """
+        elemTypes = ["button", "input", "a"]
+        for t in elemTypes:
+            elems = self.elem.find_elements_by_tag_name(t)
+            for elem in elems:
+                elemText = elem.text or elem.get_attribute("value")
+                if not elemText:
+                    continue
+                # Make lowercase, remove spaces,tabs,newlines,non alphab chars.
+                elemText = "".join(char for char in elemText if char.isalpha())
+                elemText = "".join(elemText.lower().split())
+                # Compare against list
+                for trig in triggers:
+                    if trig in elemText:
+                        return elem
+        # Did not find any element.
+        log.debug("Did not find any element.")
+        return None
+
+    def getMeta(self):
+        return {
+            "html": self.html,
+            "text": self.text,
+            "hasDenyAll": self.hasDenyAll,
+            "hadAcceptAll": self.hasAcceptAll,
+            "totalCheckboxes": self.totalCheckboxes,
+            "checkedCheckboxes": self.checkedCheckboxes,
+            "readabilityARI": self.readabilityARI,
+            "readabilityFLESH": self.readabilityFLESH,
+            "scrn": self.scrn,
+        }
+
+
 class Consent:
     """A class for consents."""
 
@@ -177,6 +276,7 @@ class Consent:
         )  # The size of the consent notice, as webdriver rect dirct.
         self.links = []
         self.html = self.elem.get_attribute("outerHTML")
+        self.text = self.elem.text
         self.apprBtn = None
         self.apprBtnMeta = None
         self.moreBtn = None
@@ -229,13 +329,21 @@ class Consent:
             "settings",
             "customize",
             "customise",
+            "change",
             "inställningar",
             "more",
             "mer",
+            "neka",
         ]
         moreBtn = self._findBtnElem(moreTrigs)
         if moreBtn:
             log.debug("FOUND MORE BUTTON!")
+            moreBtn = Button(self.url, moreBtn)
+            moreBtn.screenshot("more")
+            self.moreBtn = moreBtn
+            self.moreBtnMeta = moreBtn.getMeta()
+        else:
+            moreBtn = self._findMoreLink()
             moreBtn = Button(self.url, moreBtn)
             moreBtn.screenshot("more")
             self.moreBtn = moreBtn
@@ -270,11 +378,26 @@ class Consent:
         log.debug("Did not find any element.")
         return None
 
+    @log.catch
+    def _findMoreLink(self):
+        """A last way to find link to more settings page/info.
+        uses xpath to look for links containg cookie or policy.
+        """
+        xpaths = ["//a[contains(@href,'cookie')]", "//a[contains(@href,'policy')]"]
+        for xpath in xpaths:
+            elem = self.elem.find_element_by_xpath(xpath)
+            if elem:
+                log.debug("Found cookie/policy link element.")
+                return elem
+        log.debug("Did not find any cookie/policy link.")
+        return None  # None found
+
     def getMeta(self):
         return {
             "size": self.size,
             "links": self.links,
             "html": self.html,
+            "text": self.text,
             "apprBtn": self.apprBtnMeta,
             "moreBtn": self.moreBtnMeta,
             "scrn": self.scrn,
@@ -461,6 +584,7 @@ class PageScanner:
         self.lang = None  # The website language.
         self.scrn = None  # Screenshot of first load.
         self.consent = None  # Consent element.
+        self.conset = None
         # Cookies.
         self.startCookies = None  # The cookies that gets set at start.
         self.endCookies = None  # The cookies after the run has been done.
@@ -497,7 +621,107 @@ class PageScanner:
             consent = find_cookie_notice(self.browser)
             if consent:
                 self.consent = Consent(self.url, consent)
-                # We have buttons, we are done for now :)
+                # Now lets see if we can do some settings...
+                if self.consent.moreBtn:
+                    # We have a more button, we should click it and see what happens.
+                    # Is it a redirect or a JS click?
+                    if self.consent.moreBtn.redirect:
+                        # It is just a redir to another page, lets visit.
+                        self.browser.visit(self.consent.moreBtn.redirect)
+                        time.sleep(5)  # Sleep after load.
+                        # Now we should be on settings page, screenshot.
+                        settings_elem = find_settings(self.browser)
+                        if settings_elem:
+                            # We have an element with settings.
+                            self.conset = ConsentSettings(self.url, settings_elem)
+                            settings_elem.screenshot(
+                                genPathForScreen(self.url, "settings")
+                            )
+                            self.conset.scrn = genPathForScreen(self.url, "settings")
+                        else:
+                            # We cant find the element, lets go with the whole page.
+                            self.conset = ConsentSettings(
+                                self.url,
+                                self.browser.find_by_tag("body").first._element,
+                            )
+                            scrn = self.browser.screenshot(
+                                genPathForScreen(self.url, "settings"), full=True
+                            )
+                            self.conset.scrn = scrn
+                    else:
+                        # It is by 99,999999%(or something like that) chance a JS button, lets click, wait 5 seconds and then do some work!
+                        curUrl = self.browser.url
+                        aldr_at_lvl = False
+                        # Extra check if we already at setting level.
+                        doublecheck = ["denyall", "nekaalla"]
+                        elemText = self.consent.moreBtn.text
+                        elemText = "".join(char for char in elemText if char.isalpha())
+                        elemText = "".join(elemText.lower().split())
+                        for dc in doublecheck:
+                            if dc in elemText:
+                                log.debug("We are at level aldry!!")
+                                aldr_at_lvl = True
+                        if not aldr_at_lvl:
+                            self.consent.moreBtn.elem.click()
+                            self.browser.driver.switch_to.default_content()  # Exit the current iframe, it might have created a new one...
+                            time.sleep(5)  # Sleep after click.
+                            if self.browser.url == curUrl:
+                                # Same page, check for iframes.
+                                frames = self.browser.find_by_tag("iframe")
+                                found_frame = None
+                                for frame in frames:
+                                    if frame._element.is_displayed():
+                                        log.debug("Found visible iframe.")
+                                        found_frame = frame
+                                if found_frame:
+                                    # Switch to frame.
+                                    self.browser.driver.switch_to.frame(
+                                        found_frame._element
+                                    )
+                                # Iframes check done, now look for settings element.
+                                settings_elem = find_settings(self.browser)
+                                if settings_elem:
+                                    self.conset = ConsentSettings(
+                                        self.url, settings_elem
+                                    )
+                                    settings_elem.screenshot(
+                                        genPathForScreen(self.url, "settings")
+                                    )
+                                    self.conset.scrn = genPathForScreen(
+                                        self.url, "settings"
+                                    )
+                                else:
+                                    # Fallback to whole page.
+                                    self.conset = ConsentSettings(
+                                        self.url,
+                                        self.browser.find_by_tag("body").first._element,
+                                    )
+                                    scrn = self.browser.screenshot(
+                                        genPathForScreen(self.url, "settings"),
+                                        full=True,
+                                    )
+                                    self.conset.scrn = scrn
+                            else:
+                                # We are on a new page now again, screenshot whole page.
+                                self.conset = ConsentSettings(
+                                    self.url,
+                                    self.browser.find_by_tag("body").first._element,
+                                )
+                                scrn = self.browser.screenshot(
+                                    genPathForScreen(self.url, "settings"), full=True
+                                )
+                                self.conset.scrn = scrn
+                            # Lets look for settings button.
+                        else:
+                            # As we are at settings, then just set that to elem and screen.
+                            self.conset = ConsentSettings(
+                                self.url,
+                                self.consent.elem,
+                            )
+                            scrn = self.consent.elem.screenshot(
+                                genPathForScreen(self.url, "settings")
+                            )
+                            self.conset.scrn = genPathForScreen(self.url, "settings")
                 self.endedAt = datetime.now()
                 self.db.modify_run(
                     self.runId,
@@ -509,6 +733,7 @@ class PageScanner:
                         "lang": self.lang,
                         "scrn": self.scrn,
                         "notice": self.consent.getMeta(),
+                        "settings": self.conset.getMeta(),
                         "startCookies": self.startCookies,
                         "endCookies": self.endCookies,
                     },
@@ -538,20 +763,6 @@ class PageScanner:
             # Log stuff here.
             e = sys.exc_info()[0]
             log.exception(e)
-
-    @log.catch
-    def _findMoreLink(self):
-        """A last way to find link to more settings page/info.
-        uses xpath to look for links containg cookie or policy.
-        """
-        xpaths = ["//a[contains(@href,'cookie')]", "//a[contains(@href,'policy')]"]
-        for xpath in xpaths:
-            elems = self.browser.find_by_xpath(xpath)
-            if elems:
-                log.debug("Found cookie/policy link element.")
-                return elems.first
-        log.debug("Did not find any cookie/policy link.")
-        return None  # None found
 
     @log.catch
     def _iframeHandler(self):  # TODO: Cleamup handler, make iframe agnostic.
@@ -637,7 +848,7 @@ if __name__ == "__main__":
 
         header = next(csv_reader)
         if header != None:
-            for link in islice(csv_reader, 10):
+            for link in islice(csv_reader, 5000):
                 http_string = "https://" + link["Domain"]
                 url_list.append(http_string)
 

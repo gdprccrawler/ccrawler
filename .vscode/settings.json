@@ -5,5 +5,5 @@
   "python.linting.mypyEnabled": true,
   "python.formatting.provider": "black",
   "editor.formatOnSave": true,
-  "python.pythonPath": "C:\\Users\\Filip\\AppData\\Local\\pypoetry\\Cache\\virtualenvs\\ccrawler-zZkke9x--py3.9\\Scripts\\python.exe"
+  "python.pythonPath": "C:\\Users\\Filip\\AppData\\Local\\pypoetry\\Cache\\virtualenvs\\ccrawler-zZkke9x--py3.9\\Scripts\\"
 }

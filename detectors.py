@@ -247,35 +247,16 @@ def find_by_full_parent(browser, elems):
 
 ## FIND BY BUTTON PARENT ###
 trigsAppr = [
-    "iagree",
     "agree",
     "accept",
-    "iaccept",
-    "acceptcookies",
     "allow",
-    "enableall"
-    "continue",
-    "acceptall",
-    "godkännalla",
-    "jagförstår",
-    "ok,stäng",
+    "godkänn",
+    "förstår",
     "stäng",
     "close",
     "tilladalle",
 ]
-trigsMore = [
-    "configure",
-    "manage",
-    "managecookies",
-    "configurepreferences",
-    "managetrackers",
-    "managesettings",
-    "settings",
-    "läsmer",
-    "inställningar",
-    "hanterainställningar",
-    "tilladvalge",
-]
+trigsSettings = ["save", "continue", "spara"]
 
 
 def _findBtnElem(browser, triggers):
@@ -297,8 +278,9 @@ def _findBtnElem(browser, triggers):
             elemText = "".join(char for char in elemText if char.isalpha())
             elemText = "".join(elemText.lower().split())
             # Compare against list
-            if elemText in triggers:
-                return elem
+            for trig in triggers:
+                if trig in elemText:
+                    return elem
     # Did not find any element.
     log.debug("Did not find any element.")
     return None
@@ -308,12 +290,14 @@ def _get_parent_of_btn(browser, elem):
     s_elem = elem
     # While we have a element and parent is not whole html document.
     while s_elem and get_parent(browser, s_elem).tag_name != "html":
-        props = browser.execute_script('return window.getComputedStyle(arguments[0], null);', s_elem._element)
+        props = browser.execute_script(
+            "return window.getComputedStyle(arguments[0], null);", s_elem._element
+        )
         props = "".join(props)
         if (
             s_elem.tag_name == "div"
             and s_elem._element.rect["height"] > 10
-            and s_elem._element.rect["width"] > (elem._element.rect["width"] * 2)+50
+            and s_elem._element.rect["width"] > (elem._element.rect["width"] * 2) + 50
             and "flex" in props
         ):
             return get_parent(browser, s_elem)
@@ -329,30 +313,63 @@ def find_by_btn_parent(browser):
             return parent._element
         return None
 
+
+def find_settings_by_btn_parent(browser):
+    accept_btn = _findBtnElem(browser, trigsSettings)
+    if accept_btn:
+        parent = _get_parent_of_btn(browser, accept_btn)
+        if parent:
+            return parent._element
+        return None
+
+
 def find_cookie_notice(browser):
     log.info("Trying too find a cookie notice on page...")
-    #Get all items containg string cookie.
+    # Get all items containg string cookie.
     log.debug("Grabbing all cookie strings.")
     base_elems = find_by_cookie_string(browser)
-    #Move onto BTN PARENT FINDER.
+    # Move onto BTN PARENT FINDER.
     log.debug("Looking for parents of consent buttons.")
     elem = find_by_btn_parent(browser)
     if elem:
         return elem
-    #Checking for FIXED PRNT.
+    # Checking for FIXED PRNT.
     log.debug("Looking for fixed parents.")
-    elem = find_by_fixed_parent(browser,base_elems)
+    elem = find_by_fixed_parent(browser, base_elems)
     if elem:
         return elem
-    #Next FULL WIDTH.
+    # Next FULL WIDTH.
     log.debug("Looking for full width elems.")
     elem = find_by_full_parent(browser, base_elems)
     if elem:
         return elem
-    #Next ADBLOCK LIST.
+    # Next ADBLOCK LIST.
     log.debug("Looking by ADP blocklist.")
     elem = find_by_list(browser)
     if elem:
         return elem
     log.debug("Could not find any notice.")
+    return None
+
+
+def find_settings(browser):
+    log.info("Trying too find settings on page...")
+    # Get all items containg string cookie.
+    log.debug("Grabbing all cookie strings.")
+    base_elems = find_by_cookie_string(browser)
+    # Move onto BTN PARENT FINDER.
+    log.debug("Looking for parents of consent buttons.")
+    elem = find_settings_by_btn_parent(browser)
+    if elem:
+        return elem
+    # Checking for FIXED PRNT.
+    # log.debug("Looking for fixed parents.")
+    # elem = find_by_fixed_parent(browser, base_elems)
+    # if elem:
+    #    return elem
+    # Next FULL WIDTH.
+    # log.debug("Looking for full width elems.")
+    # elem = find_by_full_parent(browser, base_elems)
+    # if elem:
+    #    return elem
     return None
