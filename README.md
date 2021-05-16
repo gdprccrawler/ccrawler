@@ -3,6 +3,7 @@ A GPDR/Cookie consent crawler made for an exam project at Blekinge Tekniska Hög
 
 ## Prerequisites
 * Python 3.9+
+* MongoDB
 * Poetry package manager for python.
 * Chrome installed and added to path.
 * ChromeDriver for Selenium installed and added to path, see [Setting up Chrome Webdriver](https://splinter.readthedocs.io/en/latest/drivers/chrome.html#setting-up-chrome-webdriver) for more information.
