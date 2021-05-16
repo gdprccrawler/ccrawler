@@ -1,15 +1,16 @@
 # CCrawler [![CodeFactor](https://www.codefactor.io/repository/github/filipnyquist/ccrawler/badge?s=d646529acb9f30380abfc32df4ce462c37701a12)](https://www.codefactor.io/repository/github/filipnyquist/ccrawler)
-A GPDR/Cookie consent crawler made for an exam project.
+A GPDR/Cookie consent crawler made for an exam project at Blekinge Tekniska Högskola (BTH).
 
 ## Prerequisites
 * Python 3.9+
+* Poetry package manager for python.
 * Chrome installed and added to path.
 * ChromeDriver for Selenium installed and added to path, see [Setting up Chrome Webdriver](https://splinter.readthedocs.io/en/latest/drivers/chrome.html#setting-up-chrome-webdriver) for more information.
-* Packages from requirements.txt installed with PIP:` pip install -r requirements.txt`
 * If you are going to develop on the project VSCode is recommended as configuration files are setup for that.
 
 ## Setup
-First create a virtual enviroment for this project.
-Run `python -m venv .venv` for windows or `python3 -m venv .venv` for linux.
+First install the dependencies, this can be done by running `poetry install` in the root directory of the project.
+After that is done, drop into a shell with `poetry shell`.
+Now you can run the crawler/scraper with `python main.py`.
 
 More information to come....
