@@ -1,4 +1,4 @@
-# This file contains multiple different detection algorithms #
+# This file contains multiple different detection algorithms
 
 import splinter
 import selenium
@@ -148,7 +148,7 @@ def find_by_ruleset(browser: splinter.driver.DriverAPI):
 
 
 ### FULL WIDTH ###
-# The JavaScript code is from a github project, LINK HERE!!!
+# The JavaScript code is from a github project, link here before release of thesis.
 def find_by_full_helper(browser, elem):
     script = """
             function findFullWidthParent(elem) {

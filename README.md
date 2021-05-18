@@ -11,7 +11,12 @@ A GPDR/Cookie consent crawler made for an exam project at Blekinge Tekniska Hög
 
 ## Setup
 First install the dependencies, this can be done by running `poetry install` in the root directory of the project.
+
 After that is done, drop into a shell with `poetry shell`.
+
 Now you can run the crawler/scraper with `python main.py`.
 
-More information to come....
+
+## Questions?
+Send and email to finy18@student.bth.se or teli18@student.bth.se and we will get back
+asap!
